@@ -1,107 +1,109 @@
-import org.json.JSONObject;
-import org.json.JSONTokener;
-import java.io.FileReader;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.math.MathContext;
-import java.util.*;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <stdexcept>
+#include <limits>
 
-public class PolySolver {
+#include "BigInt.hpp"
 
-    private static final MathContext MC = MathContext.DECIMAL128;
+struct SharePoint {
+    BigInt x_val;
+    BigInt y_val;
+};
 
-    // Convert base-N string to decimal BigInteger
-    public static BigInteger decode(String value, int base) {
-        return new BigInteger(value.toLowerCase(), base);
+class SecretReconstructor {
+private:
+    std::vector<SharePoint> shares_list;
+
+    BigInt parseToDecimal(const std::string& number_str, int base_val) {
+        BigInt result_dec = 0;
+        BigInt base_power = 1;
+
+        for (int idx = number_str.length() - 1; idx >= 0; idx--) {
+            int digit_num;
+            char ch = number_str[idx];
+
+            if (ch >= '0' && ch <= '9') {
+                digit_num = ch - '0';
+            } else if (ch >= 'a' && ch <= 'z') {
+                digit_num = ch - 'a' + 10;
+            } else {
+                throw std::invalid_argument("Invalid character in number string.");
+            }
+
+            if (digit_num >= base_val) {
+                throw std::invalid_argument("Digit exceeds provided base.");
+            }
+
+            result_dec += digit_num * base_power;
+            base_power *= base_val;
+        }
+        return result_dec;
     }
 
-    // Solve Ax = b using Gaussian elimination with BigDecimal
-    public static BigDecimal[] solve(BigDecimal[][] A, BigDecimal[] b) {
-        int n = A.length;
-
-        for (int i = 0; i < n; i++) {
-            // Pivot
-            int max = i;
-            for (int j = i + 1; j < n; j++) {
-                if (A[j][i].abs().compareTo(A[max][i].abs()) > 0) {
-                    max = j;
-                }
-            }
-            // Swap rows
-            BigDecimal[] temp = A[i]; A[i] = A[max]; A[max] = temp;
-            BigDecimal t = b[i]; b[i] = b[max]; b[max] = t;
-
-            // Check for singularity
-            if (A[i][i].compareTo(BigDecimal.ZERO) == 0) {
-                throw new ArithmeticException("Matrix is singular or nearly singular");
-            }
-
-            // Normalize pivot row
-            BigDecimal pivot = A[i][i];
-            for (int k = i; k < n; k++) {
-                A[i][k] = A[i][k].divide(pivot, MC);
-            }
-            b[i] = b[i].divide(pivot, MC);
-
-            // Eliminate other rows
-            for (int j = 0; j < n; j++) {
-                if (j != i) {
-                    BigDecimal factor = A[j][i];
-                    for (int k = i; k < n; k++) {
-                        A[j][k] = A[j][k].subtract(factor.multiply(A[i][k], MC), MC);
-                    }
-                    b[j] = b[j].subtract(factor.multiply(b[i], MC), MC);
-                }
-            }
-        }
-        return b;
+public:
+    void insertShare(const BigInt& x_input, const std::string& y_input_str, int y_input_base) {
+        SharePoint sp;
+        sp.x_val = x_input;
+        sp.y_val = parseToDecimal(y_input_str, y_input_base);
+        shares_list.push_back(sp);
     }
 
-    public static void main(String[] args) throws Exception {
-        // Load JSON
-        String filePath = args.length > 0 ? args[0] : "input.json";
-        JSONObject obj = new JSONObject(new JSONTokener(new FileReader(filePath)));
-        int k = obj.getJSONObject("keys").getInt("k");
-        int degree = k - 1;
+    BigInt reconstructSecret() {
+        BigInt secret_val = 0;
+        int num_shares = shares_list.size();
 
-        // Collect points
-        List<Integer> xs = new ArrayList<>();
-        List<BigInteger> ys = new ArrayList<>();
-        for (String key : obj.keySet()) {
-            if (key.equals("keys")) continue;
-            try {
-                int x = Integer.parseInt(key);
-                JSONObject val = obj.getJSONObject(key);
-                int base = Integer.parseInt(val.getString("base"));
-                BigInteger y = decode(val.getString("value"), base);
-                xs.add(x);
-                ys.add(y);
-            } catch (Exception e) {
-                System.err.println("Invalid key or value in JSON: " + key);
-                return;
-            }
+        if (num_shares == 0) {
+            std::cerr << "Warning: No shares provided!" << std::endl;
+            return 0;
         }
 
-        // Sort points by x
-        List<Integer> indices = new ArrayList<>();
-        for (int i = 0; i < xs.size(); i++) indices.add(i);
-        indices.sort(Comparator.comparingInt(xs::get));
+        for (int j = 0; j < num_shares; j++) {
+            BigInt numerator = 1;
+            BigInt denominator = 1;
 
-        // Use first k points
-        BigDecimal[][] A = new BigDecimal[k][k];
-        BigDecimal[] b = new BigDecimal[k];
-        for (int i = 0; i < k; i++) {
-            int x = xs.get(indices.get(i));
-            BigInteger y = ys.get(indices.get(i));
-            b[i] = new BigDecimal(y, MC);
-            for (int j = 0; j <= degree; j++) {
-                A[i][j] = BigDecimal.valueOf(x).pow(degree - j, MC);
+            for (int i = 0; i < num_shares; i++) {
+                if (i == j) continue;
+                numerator *= shares_list[i].x_val;
+                denominator *= (shares_list[i].x_val - shares_list[j].x_val);
             }
+
+            BigInt term = shares_list[j].y_val * numerator / denominator;
+            secret_val += term;
         }
-
-        BigDecimal[] coeffs = solve(A, b);
-
-        // Print only constant term (last coefficient)
-        System.out.println(coeffs[coeffs.length - 1].toPlainString());
+        return secret_val;
     }
+
+    void resetShares() {
+        shares_list.clear();
+    }
+};
+
+int main() {
+    SecretReconstructor recon;
+
+    std::cout << "Processing First Test..." << std::endl;
+    recon.insertShare(1, "4", 10);
+    recon.insertShare(2, "111", 2);
+    recon.insertShare(3, "12", 10);
+
+    BigInt secret1 = recon.reconstructSecret();
+    std::cout << "Recovered Secret (Test 1): " << secret1 << std::endl;
+    std::cout << "---------------------------------" << std::endl;
+
+    recon.resetShares();
+
+    std::cout << "Processing Second Test..." << std::endl;
+    recon.insertShare(1, "13444211440455345511", 6);
+    recon.insertShare(2, "aed7015a346d635", 15);
+    recon.insertShare(3, "6aeeb69631c227c", 15);
+    recon.insertShare(4, "e1b5e05623d881f", 16);
+    recon.insertShare(5, "316034514573652620673", 8);
+    recon.insertShare(6, "2122212201122002221120200210011020220200", 3);
+    recon.insertShare(7, "20120221122211000100210021102001201112121", 3);
+
+    BigInt secret2 = recon.reconstructSecret();
+    std::cout << "Recovered Secret (Test 2): " << secret2 << std::endl;
+
+    return 0;
 }
